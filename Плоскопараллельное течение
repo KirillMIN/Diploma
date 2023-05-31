@@ -1,0 +1,276 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+import torch.nn.functional
+import torch.nn.init as init
+
+class PINN(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(PINN, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.relu = nn.ReLU()
+        # Определение слоев нейронной сети
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc4 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc5 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc6 = nn.Linear(hidden_dim, hidden_dim)
+
+
+    def forward(self, x, y, t):
+      # Расширение размерности тензоров x, y, t
+      x = x.unsqueeze(1)
+      y = y.unsqueeze(1)
+      t = t.unsqueeze(1)
+
+      # Конкатенация входных координат
+      coords = torch.cat([x, y, t], dim=1)
+   
+      # Прямой проход через сеть
+      # на первом слое синусоиду попробовать
+      coords = self.fc1(coords)
+      coords = torch.nn.functional.softplus(coords)
+      coords = self.fc2(coords)
+      coords = torch.nn.functional.softplus(coords)
+      coords = self.fc3(coords)
+      coords = torch.nn.functional.softplus(coords)
+      coords = self.fc4(coords)
+      coords = torch.nn.functional.softplus(coords)
+      coords = self.fc5(coords)
+      coords = torch.nn.functional.softplus(coords)
+      coords = self.fc6(coords)
+
+      # Разделение предсказаний на компоненты скорости
+      u = coords[:, 0:1]
+      v = coords[:, 1:2]
+      p = coords[:, 2:3]
+     
+
+      return u, v, p 
+
+# Создание экземпляра модели
+input_dim = 3  # размер входа (x, y, t)
+hidden_dim = 50  # размер скрытого слоя
+output_dim = 3  # размер выхода (u, v, p)
+model = PINN(input_dim, hidden_dim, output_dim)
+mu = 1.0  # Динамическая вязкость
+i = 1.0  # Градиент давления
+Re = 4  # Значение параметра Re
+h = 1
+
+def navier_stokes_equations(u, v, x, y, p, t):
+   
+    
+
+    # Вычисление частных производных по x и y
+    u_x = torch.autograd.grad(u, x, torch.ones_like(u), create_graph=True)[0]
+    u_y = torch.autograd.grad(u, y, torch.ones_like(u), create_graph=True)[0]
+    v_x = torch.autograd.grad(v, x, torch.ones_like(v), create_graph=True)[0]
+    v_y = torch.autograd.grad(v, y, torch.ones_like(v), create_graph=True)[0]
+    p_y = torch.autograd.grad(p, y, torch.ones_like(p), create_graph=True)[0]
+    p_x = torch.autograd.grad(p, y, torch.ones_like(p), create_graph=True)[0]
+
+
+    
+    # Вычисление вязкого слагаемого
+    u_xx = torch.autograd.grad(u_x, x, torch.ones_like(u_x), create_graph=True)[0]
+    u_yy = torch.autograd.grad(u_y, y, torch.ones_like(u_y), create_graph=True)[0]
+    v_xx = torch.autograd.grad(v_x, x, torch.ones_like(v_x), create_graph=True)[0]
+    v_yy = torch.autograd.grad(v_y, y, torch.ones_like(v_y), create_graph=True)[0]
+    
+  
+    # Вычисление конвективного слагаемого
+    u_t = torch.autograd.grad(u, t, torch.ones_like(u), create_graph=True)[0]
+    v_t = torch.autograd.grad(v, t, torch.ones_like(v), create_graph=True)[0]
+    
+    
+    # Вычисление уравнений Навье-Стокса
+    eq_u = u_t + u * u_x + v * u_y + p_x - (u_xx + u_yy) / Re
+    eq_v = v_t + u * v_x + v * v_y + p_y - (v_xx + v_yy) / Re
+    cont = u_x + v_y
+
+  
+    return eq_u, eq_v, cont
+
+
+def generate_infigure_points(n_points, x_start, x_end, y_start, y_end, t_start, t_end):
+    # Генерация случайных координат x и y внутри прямоугольника
+    x = torch.FloatTensor(n_points, 1).uniform_(x_start, x_end)
+    y = torch.FloatTensor(n_points, 1).uniform_(y_start, y_end)
+    
+    # Генерация случайных целочисленных значений t
+    t = torch.randint(t_start, t_end+1, size=(n_points, 1))
+    
+    # Объединение координат в один тензор
+    points = torch.cat([x, y, t], dim=1)
+    
+    return points
+
+
+
+
+def generate_boundary_points(n_points, x_start, x_end, y_start, y_end, t_start, t_end):
+    points = []
+    #создает 4* n точек по n на каждой границе
+    # Генерация точек на левой границе
+    for _ in range(n_points):
+        x = x_start
+        y = random.uniform(y_start, y_end)
+        t = random.randint(t_start, t_end)
+        points.append([x, y, t])
+        
+    # Генерация точек на правой границе
+    for _ in range(n_points):
+        x = x_end
+        y = random.uniform(y_start, y_end)
+        t = random.randint(t_start, t_end)
+        points.append([x, y, t])
+        
+    # Генерация точек на верхней границе
+    for _ in range(n_points):
+        x = random.uniform(x_start, x_end)
+        y = y_end
+        t = random.randint(t_start, t_end)
+        points.append([x, y, t])
+        
+    # Генерация точек на нижней границе
+    for _ in range(n_points):
+        x = random.uniform(x_start, x_end)
+        y = y_start
+        t = random.randint(t_start, t_end)
+        points.append([x, y, t])
+        
+    return torch.tensor(points, dtype=torch.float32)
+
+
+
+
+
+def initial_conditions(x, y, t, u_pred, v_pred, p_pred, x_start, x_end, y_start, y_end, t_start, t_end):
+    mse = nn.MSELoss()
+    initial_loss  = []
+    points = torch.cat((x.unsqueeze(1), y.unsqueeze(1), t.unsqueeze(1)), dim=1)
+    points = np.array([point.detach().numpy() for point in points])
+    for point, u, v, p in zip(points, u_pred, v_pred, p_pred):
+        x = torch.tensor(point[0])
+        y = torch.tensor(point[1])
+        t = torch.tensor(point[2])
+        if t == 0:
+          if torch.isclose(x, torch.tensor(x_start).float()) or torch.isclose(x, torch.tensor(x_end).float()) or torch.isclose(y, torch.tensor(y_start).float()) or  torch.isclose(y, torch.tensor(y_end).float()): #  Левая граница
+              continue
+          u_init = torch.tensor(0.0).unsqueeze(0) 
+          v_init = torch.tensor(0.0).unsqueeze(0)
+          p_init = torch.tensor(0.0).unsqueeze(0)
+          initial_loss.append(mse(u, u_init) + mse(v, v_init) +  mse(p, p_init))
+        else: 
+            continue
+
+    initial_loss =  torch.tensor(initial_loss)
+    return initial_loss.mean()
+
+
+def boundary_conditions(x, y, u_pred, p_pred, v_pred, x_start, x_end, y_start, y_end, t_start, t_end):
+    mse = nn.MSELoss()
+    border_loss = []
+    points = torch.cat((x.unsqueeze(1), y.unsqueeze(1)), dim=1)
+    points = np.array([point.detach().numpy() for point in points])
+    for point,  u,  v,  p in zip(points, u_pred, v_pred, p_pred):
+      x = torch.tensor(point[0])
+      y = torch.tensor(point[1])
+      if torch.isclose(x, torch.tensor(x_start).float()): #  Левая граница
+        u_left = ((i / (2 * mu)) * (h**2 - y**2) * t).unsqueeze(0)
+        p_left = torch.tensor(0.0).unsqueeze(0)
+        v_left = torch.tensor(0.0).unsqueeze(0)
+        border_loss.append(mse(u,  u_left) + mse(v,  v_left) + mse(p, p_left))
+  
+
+      elif torch.isclose(x, torch.tensor(x_end).float()): #  Правая граница
+        u_right = ((i / (2 * mu)) * (h**2 - y**2) * t).unsqueeze(0)
+        v_right = torch.tensor(0.0).unsqueeze(0)
+        p_right = torch.tensor(0.0).unsqueeze(0)
+        border_loss.append(mse(u,  u_right) + mse(v,  v_right) + mse(p, p_right))
+
+      elif torch.isclose(y, torch.tensor(y_start).float()): # Нижняя граница
+        u_bottom = torch.tensor(0.0).unsqueeze(0)
+        v_bottom = torch.tensor(0.0).unsqueeze(0)
+        p_bottom = torch.tensor(0.0).unsqueeze(0)
+        border_loss.append(mse(u,  u_bottom) + mse(v,  v_bottom) + mse(p, p_bottom))
+    
+      elif torch.isclose(y, torch.tensor(y_end).float()): # Верхняя граница
+        u_top = torch.tensor(0.0).unsqueeze(0)
+        v_top = torch.tensor(0.0).unsqueeze(0)
+        p_top = torch.tensor(0.0).unsqueeze(0)
+        border_loss.append(mse(u,  u_top) + mse(v,  v_top) +  mse(p, p_top))
+
+    border_loss = torch.tensor(border_loss)
+
+    return  border_loss.mean()
+    
+
+def loss_function(eq_u, eq_v, u_pred, v_pred, p_pred, x, y, t, model):
+
+
+    # Веса для взвешивания компонент функции потерь
+    #weight_boundary = 0.8
+    #weight_initial = 0.8
+    #weight_navier_stokes = 1.0
+
+    mse = nn.MSELoss()
+    border_loss = boundary_conditions(x, y, u_pred, p_pred, v_pred,  0, 10, 0, 2, 0, 0)
+    initial_loss = initial_conditions(x, y, t, u_pred, v_pred, p_pred,  0, 10, 0, 2, 0, 0)
+    stoks_loss = mse(eq_u, torch.zeros_like(eq_u)) + mse(eq_v, torch.zeros_like(eq_v)) + mse(cont, torch.zeros_like(cont))
+
+    
+    loss = border_loss  + initial_loss  + stoks_loss 
+        
+        
+    return loss
+
+
+# Создание оптимизатора
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+n_points = 1500
+b_points = 500
+
+# Генерация случайных точек
+points_1 = generate_infigure_points(n_points, 0, 10, 0, 1, 0, 0)
+points_2 = generate_boundary_points(b_points, 0, 10, 0, 1, 0, 0)
+
+all_points = torch.cat([points_1, points_2], dim=0)
+
+n_epochs = 10
+for epoch in range(n_epochs):
+    optimizer.zero_grad()
+    
+    # Разделение точек на координаты
+    x, y, t = all_points[:, 0], all_points[:, 1], all_points[:, 2]
+    x.requires_grad_()
+    y.requires_grad_()
+    t.requires_grad_()
+
+    
+    # Вычисление предсказаний нейронной сети
+    u_pred, v_pred, p_pred = model.forward(x, y, t)
+    
+    # Вычисление значений уравнений Навье-Стокса и граничных условий
+    eq_u, eq_v, cont = navier_stokes_equations(u_pred, v_pred, x, y, p_pred, t)
+
+    # Вычисление функции потерь
+    loss = loss_function(eq_u, eq_v, u_pred, v_pred, p_pred, x, y, t, model)
+
+           
+    # Выводим прогресс обучения
+    if (epoch+1) % 10 == 0:
+        print(f"Epoch {epoch+1}/{n_epochs}, Loss: {loss:.8f}")       
+    
+
+    # Обратное распространение ошибки и обновление весов
+    loss.backward()
+    optimizer.step()
+
